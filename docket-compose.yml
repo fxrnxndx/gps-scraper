@@ -9,6 +9,9 @@ services:
       - USERNAME=LuisDiaZ
       - PASSWORD=Supervision/25
       - TZ=America/Tijuana
+      - SPREADSHEET_ID=1OU-GcQP030R-
+      - SHEET_NAME=Hoja 1
+      - GOOGLE_CREDENTIALS_JSON=REEMPLAZA_CON_TU_JSON_EN_UNA_LINEA
     volumes:
       - ./resultados:/app/resultados
       - ./logs:/app/logs
