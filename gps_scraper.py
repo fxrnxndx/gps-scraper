@@ -14,6 +14,8 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.keys import Keys
 import subprocess
 import pytz
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
 class LatitudM2MScraper:
     def __init__(self, username, password):
@@ -23,12 +25,12 @@ class LatitudM2MScraper:
         self.session_active = False
         self.cookies_file = "session_cookies.json"
         
-        # Configuración Google Sheets
-        self.spreadsheet_id = "1OU-GcQP030R-"
-        self.sheet_name = "Hoja 1"
-        self.api_key = "AIzaSyA31W0lSCN-IHRdK0ayf9VQM50jAgWC1EI"
+        # Configuración Google Sheets (desde variables de entorno)
+        self.spreadsheet_id = os.environ.get('SPREADSHEET_ID', '1OU-GcQP030R-')
+        self.sheet_name = os.environ.get('SHEET_NAME', 'Hoja 1')
+        self.google_creds_json = os.environ.get('GOOGLE_CREDENTIALS_JSON')
         
-        # 👇 LISTA DE UNIDADES
+        # 👇 LISTA DE UNIDADES (CÁMBIALA POR LA TUYA)
         self.vehiculos = [
             "FRONTAL #02 - Maxxforce",
             "FRONTAL #04 - NARANJA",
@@ -531,7 +533,7 @@ class LatitudM2MScraper:
             pass
     
     def enviar_a_google_sheets(self, data):
-        """Envía los datos a Google Sheets sobrescribiendo el documento"""
+        """Envía los datos a Google Sheets usando OAuth2 desde variable de entorno"""
         if not data:
             print("⚠️ No hay datos para enviar a Google Sheets")
             return False
@@ -539,55 +541,65 @@ class LatitudM2MScraper:
         try:
             print("📤 Enviando datos a Google Sheets...")
             
-            # Preparar los datos para Google Sheets
+            # Verificar que tenemos credenciales
+            if not self.google_creds_json:
+                print("   ❌ No hay credenciales en GOOGLE_CREDENTIALS_JSON")
+                print("   📝 Configura la variable de entorno GOOGLE_CREDENTIALS_JSON")
+                return False
+            
+            # Cargar credenciales desde la variable de entorno
+            try:
+                creds_dict = json.loads(self.google_creds_json)
+            except json.JSONDecodeError as e:
+                print(f"   ❌ Error al parsear GOOGLE_CREDENTIALS_JSON: {e}")
+                print("   📝 Asegúrate de que el JSON esté en una sola línea y sin espacios extras")
+                return False
+            
+            # Configurar alcance y autenticación
+            scope = [
+                'https://spreadsheets.google.com/feeds',
+                'https://www.googleapis.com/auth/drive'
+            ]
+            
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+            client = gspread.authorize(creds)
+            
+            # Abrir la hoja por ID
+            sheet = client.open_by_key(self.spreadsheet_id)
+            worksheet = sheet.worksheet(self.sheet_name)
+            
+            # Limpiar la hoja
+            worksheet.clear()
+            print("   ✅ Hoja limpiada correctamente")
+            
+            # Preparar datos
             headers = list(data[0].keys()) if data else []
-            values = []
+            values = [headers]
             
-            # Agregar encabezados
-            values.append(headers)
-            
-            # Agregar filas de datos
             for row in data:
                 fila = []
                 for header in headers:
                     fila.append(row.get(header, ''))
                 values.append(fila)
             
-            # Construir la URL para la API de Google Sheets
-            # Primero, limpiar la hoja (borrar todo el contenido)
-            clear_url = f"https://sheets.googleapis.com/v4/spreadsheets/{self.spreadsheet_id}/values/{self.sheet_name}:clear?key={self.api_key}"
+            # Escribir datos
+            worksheet.update(values, value_input_option='USER_ENTERED')
             
-            # Limpiar la hoja
-            print("   🗑️ Limpiando hoja de Google Sheets...")
-            clear_response = requests.post(clear_url, json={})
-            if clear_response.status_code == 200:
-                print("   ✅ Hoja limpiada correctamente")
-            else:
-                print(f"   ⚠️ No se pudo limpiar la hoja: {clear_response.status_code}")
+            print(f"   ✅ Datos enviados correctamente: {len(values)-1} filas")
+            return True
             
-            # URL para escribir datos
-            write_url = f"https://sheets.googleapis.com/v4/spreadsheets/{self.spreadsheet_id}/values/{self.sheet_name}:append?valueInputOption=USER_ENTERED&key={self.api_key}"
-            
-            # Datos a enviar
-            body = {
-                "values": values,
-                "majorDimension": "ROWS"
-            }
-            
-            # Enviar datos
-            print("   📤 Enviando datos a Google Sheets...")
-            response = requests.post(write_url, json=body)
-            
-            if response.status_code == 200:
-                print(f"   ✅ Datos enviados correctamente: {len(values)-1} filas")
-                return True
-            else:
-                print(f"   ❌ Error al enviar datos: {response.status_code}")
-                print(f"   📝 Respuesta: {response.text}")
-                return False
-                
+        except gspread.exceptions.SpreadsheetNotFound:
+            print(f"   ❌ No se encontró la hoja con ID: {self.spreadsheet_id}")
+            print("   📝 Verifica que el ID sea correcto y que la cuenta de servicio tenga acceso")
+            return False
+        except gspread.exceptions.WorksheetNotFound:
+            print(f"   ❌ No se encontró la hoja con nombre: {self.sheet_name}")
+            print("   📝 Verifica que el nombre de la hoja sea correcto")
+            return False
         except Exception as e:
             print(f"   ❌ Error al enviar a Google Sheets: {e}")
+            import traceback
+            traceback.print_exc()
             return False
     
     def process_all_vehiculos(self):
@@ -679,13 +691,11 @@ class LatitudM2MScraper:
             now = datetime.now(tijuana_tz)
             hora_actual = now.time()
             
-            # Horario: 6:00 AM a 7:00 PM (19:00)
             hora_inicio = dt_time(6, 0, 0)
             hora_fin = dt_time(19, 0, 0)
             
             return hora_inicio <= hora_actual <= hora_fin
         except:
-            # Si falla pytz, usar hora local
             hora_actual = datetime.now().time()
             hora_inicio = dt_time(6, 0, 0)
             hora_fin = dt_time(19, 0, 0)
@@ -712,18 +722,15 @@ if __name__ == "__main__":
         ejecuciones = 0
         while True:
             try:
-                # Verificar si estamos en horario
                 if scraper.esta_en_horario():
                     ejecuciones += 1
                     print(f"\n{'='*50}")
                     print(f"✅ EJECUCIÓN #{ejecuciones} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
                     print("="*50)
                     
-                    # Asegurar sesión
                     scraper.ensure_logged_in()
                     time.sleep(3)
                     
-                    # Procesar y enviar a Google Sheets
                     exito = scraper.process_all_vehiculos()
                     
                     if exito:
@@ -732,18 +739,15 @@ if __name__ == "__main__":
                     else:
                         print("❌ Falló la ejecución")
                     
-                    # Cerrar y limpiar para liberar recursos
                     scraper.close()
                     scraper.limpiar_procesos()
                     
-                    # Esperar 10 minutos
                     print(f"\n⏳ Esperando 10 minutos hasta la próxima ejecución...")
-                    time.sleep(600)  # 10 minutos
+                    time.sleep(600)
                     
                 else:
-                    # Fuera de horario, esperar 5 minutos antes de verificar de nuevo
                     print(f"⏰ Fuera de horario ({datetime.now().strftime('%H:%M')}). Esperando 5 minutos...")
-                    time.sleep(300)  # 5 minutos
+                    time.sleep(300)
                     
             except KeyboardInterrupt:
                 print("\n🛑 Detenido por el usuario")
@@ -752,7 +756,7 @@ if __name__ == "__main__":
                 print(f"❌ Error en ejecución programada: {e}")
                 import traceback
                 traceback.print_exc()
-                time.sleep(60)  # Si falla, esperar 1 minuto
+                time.sleep(60)
                 
     except Exception as e:
         print(f"❌ Error crítico: {e}")
