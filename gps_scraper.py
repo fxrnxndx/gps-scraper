@@ -2,7 +2,8 @@ import time
 import json
 import csv
 import os
-from datetime import datetime
+import requests
+from datetime import datetime, time as dt_time
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -21,7 +22,12 @@ class LatitudM2MScraper:
         self.session_active = False
         self.cookies_file = "session_cookies.json"
         
-        # 👇 LISTA DE UNIDADES (CÁMBIALA POR LA TUYA)
+        # Configuración Google Sheets
+        self.spreadsheet_id = "1OU-GcQP030R-"
+        self.sheet_name = "Hoja 1"  # Cambia si es necesario
+        self.api_key = "AIzaSyA31W0lSCN-IHRdK0ayf9VQM50jAgWC1EI"
+        
+        # 👇 LISTA DE UNIDADES
         self.vehiculos = [
             "FRONTAL #02 - Maxxforce",
             "FRONTAL #04 - NARANJA",
@@ -60,13 +66,10 @@ class LatitudM2MScraper:
         return None
     
     def setup_driver(self):
-        """Configura el driver para Chromium en modo HEADLESS (para Docker)"""
+        """Configura el driver para Chromium en modo HEADLESS"""
         options = Options()
-        
-        # Usar Chromium en lugar de Brave (más común en Docker)
         options.binary_location = os.environ.get('CHROME_BIN', '/usr/bin/chromium')
         
-        # MODO HEADLESS
         options.add_argument('--headless=new')
         options.add_argument('--window-size=1920,1080')
         options.add_argument('--no-sandbox')
@@ -526,8 +529,66 @@ class LatitudM2MScraper:
         except:
             pass
     
-    def process_all_vehiculos(self, max_vehiculos=None):
-        """Procesa todos los vehículos y guarda en un solo archivo por día"""
+    def enviar_a_google_sheets(self, data):
+        """Envía los datos a Google Sheets sobrescribiendo el documento"""
+        if not data:
+            print("⚠️ No hay datos para enviar a Google Sheets")
+            return False
+        
+        try:
+            print("📤 Enviando datos a Google Sheets...")
+            
+            # Preparar los datos para Google Sheets
+            headers = list(data[0].keys()) if data else []
+            values = []
+            
+            # Agregar encabezados
+            values.append(headers)
+            
+            # Agregar filas de datos
+            for row in data:
+                fila = []
+                for header in headers:
+                    fila.append(row.get(header, ''))
+                values.append(fila)
+            
+            # Construir la URL para la API de Google Sheets
+            # Primero, limpiar la hoja (borrar todo el contenido)
+            clear_url = f"https://sheets.googleapis.com/v4/spreadsheets/{self.spreadsheet_id}/values/{self.sheet_name}:clear?key={self.api_key}"
+            
+            # Limpiar la hoja
+            clear_response = requests.post(clear_url, json={})
+            if clear_response.status_code == 200:
+                print("   ✅ Hoja limpiada correctamente")
+            else:
+                print(f"   ⚠️ No se pudo limpiar la hoja: {clear_response.status_code}")
+            
+            # URL para escribir datos
+            write_url = f"https://sheets.googleapis.com/v4/spreadsheets/{self.spreadsheet_id}/values/{self.sheet_name}:append?valueInputOption=USER_ENTERED&key={self.api_key}"
+            
+            # Datos a enviar
+            body = {
+                "values": values,
+                "majorDimension": "ROWS"
+            }
+            
+            # Enviar datos
+            response = requests.post(write_url, json=body)
+            
+            if response.status_code == 200:
+                print(f"   ✅ Datos enviados correctamente: {len(values)-1} filas")
+                return True
+            else:
+                print(f"   ❌ Error al enviar datos: {response.status_code}")
+                print(f"   📝 Respuesta: {response.text}")
+                return False
+                
+        except Exception as e:
+            print(f"   ❌ Error al enviar a Google Sheets: {e}")
+            return False
+    
+    def process_all_vehiculos(self):
+        """Procesa todos los vehículos y envía a Google Sheets"""
         print("\n" + "="*50)
         print("🚀 INICIANDO PROCESAMIENTO DE VEHÍCULOS")
         print("="*50)
@@ -536,17 +597,13 @@ class LatitudM2MScraper:
         
         if not vehiculos:
             print("❌ No hay vehículos en la lista")
-            return
-        
-        if max_vehiculos:
-            vehiculos = vehiculos[:max_vehiculos]
+            return False
         
         print(f"\n📋 Procesando {len(vehiculos)} vehículos:")
         for v in vehiculos:
             print(f"   - {v}")
         
         todos_los_datos = []
-        
         procesados = 0
         fallidos = 0
         
@@ -589,34 +646,18 @@ class LatitudM2MScraper:
             print(f"   ⏳ Esperando 3 segundos antes del siguiente...")
             time.sleep(3)
         
-        # GUARDAR TODOS LOS DATOS EN UN SOLO ARCHIVO POR DÍA
-        if todos_los_datos:
-            fecha_actual = datetime.now().strftime('%Y%m%d')
-            nombre_archivo = f"resultados/datos_gps_{fecha_actual}.csv"
-            
-            try:
-                all_keys = set()
-                for row in todos_los_datos:
-                    all_keys.update(row.keys())
-                
-                with open(nombre_archivo, 'w', newline='', encoding='utf-8') as f:
-                    writer = csv.DictWriter(f, fieldnames=sorted(all_keys))
-                    writer.writeheader()
-                    writer.writerows(todos_los_datos)
-                print(f"\n💾 TODOS los datos guardados en: {nombre_archivo}")
-                print(f"📊 Total de filas: {len(todos_los_datos)}")
-            except Exception as e:
-                print(f"❌ Error al guardar CSV: {e}")
-        else:
-            print("⚠️ No hay datos para guardar")
-        
         print("\n" + "="*50)
         print("📊 RESUMEN FINAL")
         print("="*50)
         print(f"✅ Vehículos procesados: {procesados}")
         print(f"❌ Fallidos: {fallidos}")
-        print(f"📁 Datos guardados en: resultados/datos_gps_{datetime.now().strftime('%Y%m%d')}.csv")
-        print("="*50)
+        
+        # Enviar a Google Sheets
+        if todos_los_datos:
+            return self.enviar_a_google_sheets(todos_los_datos)
+        else:
+            print("⚠️ No hay datos para enviar")
+            return False
     
     def close(self):
         """Cierra el navegador"""
@@ -627,34 +668,90 @@ class LatitudM2MScraper:
             except:
                 pass
 
+    def esta_en_horario(self):
+        """Verifica si la hora actual está entre 6:00 AM y 7:00 PM (hora Tijuana)"""
+        # Establecer zona horaria Tijuana
+        import pytz
+        tijuana_tz = pytz.timezone('America/Tijuana')
+        now = datetime.now(tijuana_tz)
+        hora_actual = now.time()
+        
+        # Horario: 6:00 AM a 7:00 PM (19:00)
+        hora_inicio = dt_time(6, 0, 0)
+        hora_fin = dt_time(19, 0, 0)
+        
+        return hora_inicio <= hora_actual <= hora_fin
+
 # ============================================
-# 🚀 EJECUCIÓN PRINCIPAL
+# 🚀 EJECUCIÓN PRINCIPAL CON PROGRAMACIÓN
 # ============================================
 
 if __name__ == "__main__":
-    # Leer credenciales de variables de entorno (para Docker)
     USERNAME = os.environ.get('USERNAME', 'LuisDiaZ')
     PASSWORD = os.environ.get('PASSWORD', 'Supervision/25')
     
     scraper = LatitudM2MScraper(USERNAME, PASSWORD)
     
+    # Instalar pytz si no está instalado
+    try:
+        import pytz
+    except ImportError:
+        print("📦 Instalando pytz...")
+        os.system("pip install pytz")
+        import pytz
+    
     try:
         print("\n" + "="*50)
-        print("🚀 INICIANDO SCRAPER DE LATITUD M2M (DOCKER)")
+        print("🚀 INICIANDO SCRAPER DE LATITUD M2M (PROGRAMADO)")
+        print(f"📅 Inicio: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print("⏰ Horario: 6:00 AM - 7:00 PM (cada 10 minutos)")
         print("="*50 + "\n")
         
-        scraper.ensure_logged_in()
-        print("⏳ Esperando 5 segundos para que la página se estabilice...")
-        time.sleep(5)
-        
-        scraper.process_all_vehiculos()
-        
-    except KeyboardInterrupt:
-        print("\n🛑 Detenido por el usuario")
+        ejecuciones = 0
+        while True:
+            try:
+                # Verificar si estamos en horario
+                if scraper.esta_en_horario():
+                    print(f"\n✅ Ejecución #{ejecuciones + 1} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                    
+                    # Asegurar sesión
+                    scraper.ensure_logged_in()
+                    time.sleep(3)
+                    
+                    # Procesar y enviar a Google Sheets
+                    exito = scraper.process_all_vehiculos()
+                    
+                    if exito:
+                        ejecuciones += 1
+                        print(f"✅ Ejecución #{ejecuciones} completada con éxito")
+                    else:
+                        print("❌ Falló la ejecución, reintentando...")
+                    
+                    # Cerrar y limpiar para liberar recursos
+                    scraper.close()
+                    scraper.limpiar_procesos()
+                    
+                    # Esperar 10 minutos
+                    print(f"\n⏳ Esperando 10 minutos hasta la próxima ejecución...")
+                    time.sleep(600)  # 10 minutos
+                    
+                else:
+                    # Fuera de horario, esperar 5 minutos antes de verificar de nuevo
+                    print(f"⏰ Fuera de horario ({datetime.now().strftime('%H:%M')}). Esperando 5 minutos...")
+                    time.sleep(300)  # 5 minutos
+                    
+            except KeyboardInterrupt:
+                print("\n🛑 Detenido por el usuario")
+                break
+            except Exception as e:
+                print(f"❌ Error en ejecución programada: {e}")
+                time.sleep(60)  # Si falla, esperar 1 minuto
+                
     except Exception as e:
-        print(f"\n❌ Error: {e}")
+        print(f"❌ Error crítico: {e}")
         import traceback
         traceback.print_exc()
     finally:
         scraper.close()
         scraper.limpiar_procesos()
+        print("\n🔒 Programa finalizado")
