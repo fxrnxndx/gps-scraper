@@ -12,5 +12,6 @@ services:
       - SPREADSHEET_ID=1OU-GcQP030R-
       - SHEET_NAME=Hoja 1
     volumes:
+      - ./credentials.json:/app/credentials.json
       - ./resultados:/app/resultados
       - ./logs:/app/logs
