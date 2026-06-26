@@ -8,8 +8,7 @@ services:
     environment:
       - USERNAME=LuisDiaZ
       - PASSWORD=Supervision/25
-      - TZ=America/Mexico_City
+      - TZ=America/Tijuana
     volumes:
       - ./resultados:/app/resultados
       - ./logs:/app/logs
-    command: python gps_scraper.py
