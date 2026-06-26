@@ -13,6 +13,7 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.keys import Keys
 import subprocess
+import pytz
 
 class LatitudM2MScraper:
     def __init__(self, username, password):
@@ -24,7 +25,7 @@ class LatitudM2MScraper:
         
         # Configuración Google Sheets
         self.spreadsheet_id = "1OU-GcQP030R-"
-        self.sheet_name = "Hoja 1"  # Cambia si es necesario
+        self.sheet_name = "Hoja 1"
         self.api_key = "AIzaSyA31W0lSCN-IHRdK0ayf9VQM50jAgWC1EI"
         
         # 👇 LISTA DE UNIDADES
@@ -557,6 +558,7 @@ class LatitudM2MScraper:
             clear_url = f"https://sheets.googleapis.com/v4/spreadsheets/{self.spreadsheet_id}/values/{self.sheet_name}:clear?key={self.api_key}"
             
             # Limpiar la hoja
+            print("   🗑️ Limpiando hoja de Google Sheets...")
             clear_response = requests.post(clear_url, json={})
             if clear_response.status_code == 200:
                 print("   ✅ Hoja limpiada correctamente")
@@ -573,6 +575,7 @@ class LatitudM2MScraper:
             }
             
             # Enviar datos
+            print("   📤 Enviando datos a Google Sheets...")
             response = requests.post(write_url, json=body)
             
             if response.status_code == 200:
@@ -654,6 +657,7 @@ class LatitudM2MScraper:
         
         # Enviar a Google Sheets
         if todos_los_datos:
+            print(f"📊 Total de filas a enviar: {len(todos_los_datos)}")
             return self.enviar_a_google_sheets(todos_los_datos)
         else:
             print("⚠️ No hay datos para enviar")
@@ -670,17 +674,22 @@ class LatitudM2MScraper:
 
     def esta_en_horario(self):
         """Verifica si la hora actual está entre 6:00 AM y 7:00 PM (hora Tijuana)"""
-        # Establecer zona horaria Tijuana
-        import pytz
-        tijuana_tz = pytz.timezone('America/Tijuana')
-        now = datetime.now(tijuana_tz)
-        hora_actual = now.time()
-        
-        # Horario: 6:00 AM a 7:00 PM (19:00)
-        hora_inicio = dt_time(6, 0, 0)
-        hora_fin = dt_time(19, 0, 0)
-        
-        return hora_inicio <= hora_actual <= hora_fin
+        try:
+            tijuana_tz = pytz.timezone('America/Tijuana')
+            now = datetime.now(tijuana_tz)
+            hora_actual = now.time()
+            
+            # Horario: 6:00 AM a 7:00 PM (19:00)
+            hora_inicio = dt_time(6, 0, 0)
+            hora_fin = dt_time(19, 0, 0)
+            
+            return hora_inicio <= hora_actual <= hora_fin
+        except:
+            # Si falla pytz, usar hora local
+            hora_actual = datetime.now().time()
+            hora_inicio = dt_time(6, 0, 0)
+            hora_fin = dt_time(19, 0, 0)
+            return hora_inicio <= hora_actual <= hora_fin
 
 # ============================================
 # 🚀 EJECUCIÓN PRINCIPAL CON PROGRAMACIÓN
@@ -692,19 +701,12 @@ if __name__ == "__main__":
     
     scraper = LatitudM2MScraper(USERNAME, PASSWORD)
     
-    # Instalar pytz si no está instalado
-    try:
-        import pytz
-    except ImportError:
-        print("📦 Instalando pytz...")
-        os.system("pip install pytz")
-        import pytz
-    
     try:
         print("\n" + "="*50)
         print("🚀 INICIANDO SCRAPER DE LATITUD M2M (PROGRAMADO)")
         print(f"📅 Inicio: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print("⏰ Horario: 6:00 AM - 7:00 PM (cada 10 minutos)")
+        print("📊 Google Sheets: Enviando datos automáticamente")
         print("="*50 + "\n")
         
         ejecuciones = 0
@@ -712,7 +714,10 @@ if __name__ == "__main__":
             try:
                 # Verificar si estamos en horario
                 if scraper.esta_en_horario():
-                    print(f"\n✅ Ejecución #{ejecuciones + 1} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                    ejecuciones += 1
+                    print(f"\n{'='*50}")
+                    print(f"✅ EJECUCIÓN #{ejecuciones} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                    print("="*50)
                     
                     # Asegurar sesión
                     scraper.ensure_logged_in()
@@ -722,10 +727,10 @@ if __name__ == "__main__":
                     exito = scraper.process_all_vehiculos()
                     
                     if exito:
-                        ejecuciones += 1
                         print(f"✅ Ejecución #{ejecuciones} completada con éxito")
+                        print("✅ Datos enviados a Google Sheets")
                     else:
-                        print("❌ Falló la ejecución, reintentando...")
+                        print("❌ Falló la ejecución")
                     
                     # Cerrar y limpiar para liberar recursos
                     scraper.close()
@@ -745,6 +750,8 @@ if __name__ == "__main__":
                 break
             except Exception as e:
                 print(f"❌ Error en ejecución programada: {e}")
+                import traceback
+                traceback.print_exc()
                 time.sleep(60)  # Si falla, esperar 1 minuto
                 
     except Exception as e:
