@@ -703,7 +703,7 @@ class LatitudM2MScraper:
         for i, vehiculo in enumerate(vehiculos, 1):
             print(f"\n{'='*50}")
             print(f"[{i}/{len(vehiculos)}] Procesando: {vehiculo}")
-            print("="*50")
+            print("="*50)
             
             if not self.select_plantilla("Viajes"):
                 print("   ⚠️ No se pudo seleccionar la plantilla 'Viajes'")
