@@ -2,7 +2,8 @@ import time
 import json
 import csv
 import os
-import requests
+import mysql.connector
+from mysql.connector import Error
 from datetime import datetime, time as dt_time
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -14,8 +15,6 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.keys import Keys
 import subprocess
 import pytz
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
 
 class LatitudM2MScraper:
     def __init__(self, username, password):
@@ -25,10 +24,13 @@ class LatitudM2MScraper:
         self.session_active = False
         self.cookies_file = "session_cookies.json"
         
-        # Configuración Google Sheets (desde variables de entorno)
-        self.spreadsheet_id = os.environ.get('SPREADSHEET_ID', '1OU-GcQP030R-')
-        self.sheet_name = os.environ.get('SHEET_NAME', 'Hoja 1')
-        self.google_creds_json = os.environ.get('GOOGLE_CREDENTIALS_JSON')
+        # Configuración MySQL
+        self.mysql_config = {
+            'host': os.environ.get('MYSQL_HOST', 'localhost'),
+            'database': os.environ.get('MYSQL_DATABASE', 'gps_data'),
+            'user': os.environ.get('MYSQL_USER', 'root'),
+            'password': os.environ.get('MYSQL_PASSWORD', '')
+        }
         
         # 👇 LISTA DE UNIDADES (CÁMBIALA POR LA TUYA)
         self.vehiculos = [
@@ -532,78 +534,148 @@ class LatitudM2MScraper:
         except:
             pass
     
-    def enviar_a_google_sheets(self, data):
-        """Envía los datos a Google Sheets usando OAuth2 desde variable de entorno"""
+    def guardar_en_mysql(self, data):
+        """Guarda los datos en MySQL con INSERT ... ON DUPLICATE KEY UPDATE"""
         if not data:
-            print("⚠️ No hay datos para enviar a Google Sheets")
+            print("⚠️ No hay datos para guardar en MySQL")
             return False
         
         try:
-            print("📤 Enviando datos a Google Sheets...")
+            print("📤 Guardando datos en MySQL...")
             
-            # Verificar que tenemos credenciales
-            if not self.google_creds_json:
-                print("   ❌ No hay credenciales en GOOGLE_CREDENTIALS_JSON")
-                print("   📝 Configura la variable de entorno GOOGLE_CREDENTIALS_JSON")
-                return False
+            conn = mysql.connector.connect(**self.mysql_config)
+            cursor = conn.cursor()
             
-            # Cargar credenciales desde la variable de entorno
-            try:
-                creds_dict = json.loads(self.google_creds_json)
-            except json.JSONDecodeError as e:
-                print(f"   ❌ Error al parsear GOOGLE_CREDENTIALS_JSON: {e}")
-                print("   📝 Asegúrate de que el JSON esté en una sola línea y sin espacios extras")
-                return False
+            # Verificar que la tabla existe
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS viajes_gps (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    vehiculo VARCHAR(100) NOT NULL,
+                    numero VARCHAR(10),
+                    comienzo DATETIME,
+                    ubicacion_inicial VARCHAR(500),
+                    coordenadas VARCHAR(100),
+                    kilometros VARCHAR(20),
+                    duracion VARCHAR(20),
+                    horas_motor VARCHAR(20),
+                    velocidad_maxima VARCHAR(20),
+                    cantidad_viajes VARCHAR(10),
+                    consumido VARCHAR(20),
+                    tipo_informe VARCHAR(50),
+                    fecha_registro DATE,
+                    fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY unique_viaje (vehiculo, comienzo)
+                )
+            """)
             
-            # Configurar alcance y autenticación
-            scope = [
-                'https://spreadsheets.google.com/feeds',
-                'https://www.googleapis.com/auth/drive'
-            ]
-            
-            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-            client = gspread.authorize(creds)
-            
-            # Abrir la hoja por ID
-            sheet = client.open_by_key(self.spreadsheet_id)
-            worksheet = sheet.worksheet(self.sheet_name)
-            
-            # Limpiar la hoja
-            worksheet.clear()
-            print("   ✅ Hoja limpiada correctamente")
-            
-            # Preparar datos
-            headers = list(data[0].keys()) if data else []
-            values = [headers]
+            # Preparar los datos
+            fecha_hoy = datetime.now().date()
+            insertados = 0
+            actualizados = 0
             
             for row in data:
-                fila = []
-                for header in headers:
-                    fila.append(row.get(header, ''))
-                values.append(fila)
+                # Extraer valores
+                vehiculo = row.get('vehiculo', '')
+                numero = row.get('numero', '')
+                comienzo = row.get('comienzo', None)
+                ubicacion_inicial = row.get('ubicacion_inicial', '')
+                coordenadas = row.get('coordenadas', '')
+                kilometros = row.get('kilometros', '')
+                duracion = row.get('duracion', '')
+                horas_motor = row.get('horas_motor', '')
+                velocidad_maxima = row.get('velocidad_maxima', '')
+                cantidad_viajes = row.get('cantidad_viajes', '')
+                consumido = row.get('consumido', '')
+                tipo_informe = row.get('tipo_informe', '')
+                
+                # Convertir comienzo a formato DATETIME si es posible
+                if comienzo:
+                    try:
+                        # Intentar parsear fecha en formato "25.06.2026 10:05:40"
+                        from datetime import datetime as dt
+                        comienzo_dt = dt.strptime(comienzo, "%d.%m.%Y %H:%M:%S")
+                        comienzo = comienzo_dt.strftime("%Y-%m-%d %H:%M:%S")
+                    except:
+                        # Si falla, dejarlo como está
+                        pass
+                else:
+                    comienzo = None
+                
+                # Query con UPSERT
+                query = """
+                    INSERT INTO viajes_gps (
+                        vehiculo, numero, comienzo, ubicacion_inicial, coordenadas,
+                        kilometros, duracion, horas_motor, velocidad_maxima,
+                        cantidad_viajes, consumido, tipo_informe, fecha_registro
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    ) ON DUPLICATE KEY UPDATE
+                        ubicacion_inicial = VALUES(ubicacion_inicial),
+                        coordenadas = VALUES(coordenadas),
+                        kilometros = VALUES(kilometros),
+                        duracion = VALUES(duracion),
+                        horas_motor = VALUES(horas_motor),
+                        velocidad_maxima = VALUES(velocidad_maxima),
+                        cantidad_viajes = VALUES(cantidad_viajes),
+                        consumido = VALUES(consumido),
+                        tipo_informe = VALUES(tipo_informe),
+                        fecha_actualizacion = CURRENT_TIMESTAMP
+                """
+                
+                cursor.execute(query, (
+                    vehiculo, numero, comienzo, ubicacion_inicial, coordenadas,
+                    kilometros, duracion, horas_motor, velocidad_maxima,
+                    cantidad_viajes, consumido, tipo_informe, fecha_hoy
+                ))
+                
+                if cursor.rowcount == 1:
+                    insertados += 1
+                elif cursor.rowcount == 2:
+                    actualizados += 1
             
-            # Escribir datos
-            worksheet.update(values, value_input_option='USER_ENTERED')
+            conn.commit()
+            cursor.close()
+            conn.close()
             
-            print(f"   ✅ Datos enviados correctamente: {len(values)-1} filas")
+            print(f"   ✅ MySQL: {insertados} registros insertados, {actualizados} actualizados")
             return True
             
-        except gspread.exceptions.SpreadsheetNotFound:
-            print(f"   ❌ No se encontró la hoja con ID: {self.spreadsheet_id}")
-            print("   📝 Verifica que el ID sea correcto y que la cuenta de servicio tenga acceso")
-            return False
-        except gspread.exceptions.WorksheetNotFound:
-            print(f"   ❌ No se encontró la hoja con nombre: {self.sheet_name}")
-            print("   📝 Verifica que el nombre de la hoja sea correcto")
+        except Error as e:
+            print(f"   ❌ Error en MySQL: {e}")
             return False
         except Exception as e:
-            print(f"   ❌ Error al enviar a Google Sheets: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"   ❌ Error general: {e}")
             return False
     
+    def save_to_csv(self, data, filename=None):
+        """Guarda los datos en CSV"""
+        if not data:
+            print("   ⚠️ No hay datos para guardar")
+            return None
+            
+        if filename is None:
+            fecha_actual = datetime.now().strftime('%Y%m%d')
+            filename = f"resultados/datos_gps_{fecha_actual}.csv"
+        
+        try:
+            all_keys = set()
+            for row in data:
+                all_keys.update(row.keys())
+            
+            os.makedirs('resultados', exist_ok=True)
+            
+            with open(filename, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=sorted(all_keys))
+                writer.writeheader()
+                writer.writerows(data)
+            print(f"   💾 CSV guardado en {filename}")
+            return filename
+        except Exception as e:
+            print(f"   ❌ Error al guardar CSV: {e}")
+            return None
+    
     def process_all_vehiculos(self):
-        """Procesa todos los vehículos y envía a Google Sheets"""
+        """Procesa todos los vehículos, guarda CSV y envía a MySQL"""
         print("\n" + "="*50)
         print("🚀 INICIANDO PROCESAMIENTO DE VEHÍCULOS")
         print("="*50)
@@ -667,12 +739,18 @@ class LatitudM2MScraper:
         print(f"✅ Vehículos procesados: {procesados}")
         print(f"❌ Fallidos: {fallidos}")
         
-        # Enviar a Google Sheets
         if todos_los_datos:
-            print(f"📊 Total de filas a enviar: {len(todos_los_datos)}")
-            return self.enviar_a_google_sheets(todos_los_datos)
+            print(f"📊 Total de filas: {len(todos_los_datos)}")
+            
+            # 1. Guardar CSV
+            self.save_to_csv(todos_los_datos)
+            
+            # 2. Guardar en MySQL
+            self.guardar_en_mysql(todos_los_datos)
+            
+            return True
         else:
-            print("⚠️ No hay datos para enviar")
+            print("⚠️ No hay datos para guardar")
             return False
     
     def close(self):
@@ -716,7 +794,7 @@ if __name__ == "__main__":
         print("🚀 INICIANDO SCRAPER DE LATITUD M2M (PROGRAMADO)")
         print(f"📅 Inicio: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print("⏰ Horario: 6:00 AM - 7:00 PM (cada 10 minutos)")
-        print("📊 Google Sheets: Enviando datos automáticamente")
+        print("📊 Datos: CSV + MySQL")
         print("="*50 + "\n")
         
         ejecuciones = 0
@@ -735,7 +813,6 @@ if __name__ == "__main__":
                     
                     if exito:
                         print(f"✅ Ejecución #{ejecuciones} completada con éxito")
-                        print("✅ Datos enviados a Google Sheets")
                     else:
                         print("❌ Falló la ejecución")
                     
