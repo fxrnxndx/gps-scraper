@@ -9,7 +9,7 @@ services:
       - USERNAME=LuisDiaZ
       - PASSWORD=Supervision/25
       - TZ=America/Tijuana
-      - MYSQL_HOST=host.docker.internal
+      - MYSQL_HOST=195.35.61.124
       - MYSQL_DATABASE=u821270692_techlogicredyb
       - MYSQL_USER=u821270692_redyb
       - MYSQL_PASSWORD=Perrosucio18
