@@ -24,13 +24,18 @@ class LatitudM2MScraper:
         self.session_active = False
         self.cookies_file = "session_cookies.json"
         
-        # Configuración MySQL
+        # Configuración MySQL (desde variables de entorno)
         self.mysql_config = {
-            'host': os.environ.get('MYSQL_HOST', 'localhost'),
+            'host': os.environ.get('MYSQL_HOST', 'host.docker.internal'),
             'database': os.environ.get('MYSQL_DATABASE', 'gps_data'),
             'user': os.environ.get('MYSQL_USER', 'root'),
             'password': os.environ.get('MYSQL_PASSWORD', '')
         }
+        
+        print(f"📊 Configuración MySQL:")
+        print(f"   Host: {self.mysql_config['host']}")
+        print(f"   Database: {self.mysql_config['database']}")
+        print(f"   User: {self.mysql_config['user']}")
         
         # 👇 LISTA DE UNIDADES (CÁMBIALA POR LA TUYA)
         self.vehiculos = [
@@ -542,6 +547,8 @@ class LatitudM2MScraper:
         
         try:
             print("📤 Guardando datos en MySQL...")
+            print(f"   Host: {self.mysql_config['host']}")
+            print(f"   Database: {self.mysql_config['database']}")
             
             conn = mysql.connector.connect(**self.mysql_config)
             cursor = conn.cursor()
@@ -591,7 +598,6 @@ class LatitudM2MScraper:
                 # Convertir comienzo a formato DATETIME si es posible
                 if comienzo:
                     try:
-                        # Intentar parsear fecha en formato "25.06.2026 10:05:40"
                         from datetime import datetime as dt
                         comienzo_dt = dt.strptime(comienzo, "%d.%m.%Y %H:%M:%S")
                         comienzo = comienzo_dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -697,7 +703,7 @@ class LatitudM2MScraper:
         for i, vehiculo in enumerate(vehiculos, 1):
             print(f"\n{'='*50}")
             print(f"[{i}/{len(vehiculos)}] Procesando: {vehiculo}")
-            print("="*50)
+            print("="*50")
             
             if not self.select_plantilla("Viajes"):
                 print("   ⚠️ No se pudo seleccionar la plantilla 'Viajes'")
