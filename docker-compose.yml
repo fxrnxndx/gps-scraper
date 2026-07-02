@@ -9,8 +9,10 @@ services:
       - USERNAME=LuisDiaZ
       - PASSWORD=Supervision/25
       - TZ=America/Tijuana
-      - SPREADSHEET_ID=1OU-GcQP030R-
-      - SHEET_NAME=Hoja 1
+      - MYSQL_HOST=host.docker.internal
+      - MYSQL_DATABASE=u821270692_techlogicredyb
+      - MYSQL_USER=u821270692_redyb
+      - MYSQL_PASSWORD=Perrosucio18
     volumes:
       - ./credentials.json:/app/credentials.json
       - ./resultados:/app/resultados
